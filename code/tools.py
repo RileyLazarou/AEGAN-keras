@@ -53,23 +53,6 @@ def get_mnist_data():
     return (x_train, y_train), (x_test, y_test)
 
 
-def plot_reconstruction(reconstruction_function, images, num, filename, inverse=False):
-    reconstructions = reconstruction_function(images)
-    interwoven = [y for x in zip(images, reconstructions) for y in x]
-    plot_images(np.array(interwoven),
-                num,
-                filename,
-                inverse=inverse)
-
-
-def plot_generated(generator_function, latent_vectors, num, filename, inverse=False):
-    images = generator_function(latent_vectors)
-    plot_images(np.array(images),
-                num,
-                filename,
-                inverse=inverse)
-
-
 def upscale(im):
     new_im = np.zeros((2 * im.shape[0], 2 * im.shape[1], *im.shape[2:]))
     new_im[::2, ::2] = im
@@ -92,6 +75,9 @@ def plot_interpolation_gif(start,
         os.makedirs(directory)
     start_encoded = encoder(np.array([start]))[0]
     finish_encoded = encoder(np.array([finish]))[0]
+    if len(start.shape) == 2:
+        start = decoder(start)
+        finish = decoder(finish)
     if interpolation == 'linear':
         space = np.linspace(start_encoded, finish_encoded, frames)
     elif interpolation == 'sigmoid':
@@ -134,7 +120,11 @@ def plot_interpolation_grid(starts,
     ims = []
     for i in range(len(starts)):
         start = starts[i]
+        if len(start.shape) != 3:
+            start = decoder(start.reshape((1, -1)))[0]
         finish = finishes[i]
+        if len(finish.shape) != 3:
+            finish = decoder(finish.reshape((1, -1)))[0]
         start_encoded = starts_encoded[i]
         finish_encoded = finishes_encoded[i]
         space = np.linspace(start_encoded, finish_encoded, steps)
@@ -149,19 +139,6 @@ def plot_interpolation_grid(starts,
             ims.append(image)
         ims.append(finish)
     plot_images(ims, steps+2, filename, inverse=inverse)
-
-
-def plot_sampling(noise_function,
-            generator,
-            filename,
-            num=10,
-            upscale_times=2,
-            inverse=False):
-    images = generator(noise_function(num*num))
-    for i in range(upscale_times):
-        images = [upscale(x) for x in images]
-    images = np.array(images)
-    plot_images(images, num, filename, inverse=inverse)
 
 
 def build_directories(base_dir, experiment):

@@ -276,7 +276,7 @@ class GenerativeAdversarialNetwork(GenerativeModel):
                     real_labels_d)
             loss_d2 = self.discriminator_image.train_on_batch(
                     fake,
-                    np.ones((batch_size, 1))*0)
+                    fake_labels_d)
             running_loss_d += loss_d1 + loss_d2
             loss_g1 = self.gan_image.train_on_batch(
                     self.noise_generating_function(batch_size),
@@ -308,7 +308,7 @@ class AdversarialAutoEncoder(AutoEncoder):
                          data_generating_function,
                          noise_generating_function)
         self.discriminator_latent = self._build_discriminator_latent(
-                image_shape,
+                latent_dim,
                 **self.parameters["discriminator_latent"])
         self.aae = self._build_aae(
                 self.encoder,
@@ -320,7 +320,7 @@ class AdversarialAutoEncoder(AutoEncoder):
                                     latent_dim,
                                     layers=16,
                                     width=16,
-                                    hidden_activation='softplus',
+                                    hidden_activation='relu',
                                     init=RandomNormal(mean=0, stddev=0.02)):
         """Build a model that classifies latent vectors as real or fake."""
 
@@ -335,11 +335,11 @@ class AdversarialAutoEncoder(AutoEncoder):
         model = Model(input_layer, output_layer)
         model.compile(Adam(lr=self.parameters["lr"]["gan_discriminator"],
                            beta_1=0.5),
-                      loss=self.parameters["loss"]["reconstruct_latent"])
+                      loss=self.parameters["loss"]["adversarial"])
         return model
 
 
-    def _build_aae(encoder, generator, discriminator):
+    def _build_aae(self, encoder, generator, discriminator):
         discriminator.trainable = False
         input_shape = encoder.layers[0].input_shape[0][1:]
         input_layer = Input(input_shape)
@@ -352,7 +352,7 @@ class AdversarialAutoEncoder(AutoEncoder):
                       loss=[self.parameters["loss"]["reconstruct_image"],
                             self.parameters["loss"]["adversarial"]],
                       loss_weights=[self.parameters["alpha"]["reconstruct_image"],
-                                    self.parameters["alpha"]["discriminate_latent"]]),
+                                    self.parameters["alpha"]["discriminate_latent"]])
         return model
 
 
@@ -362,5 +362,255 @@ class AdversarialAutoEncoder(AutoEncoder):
 
 
 
-    def train(self, batch_size=32):
-        raise NotImplementedError
+    def train(self, batch_size=32, batch_num=1, verbose=True, prepend=''):
+        running_loss_r = 0
+        running_loss_d = 0
+        running_loss_g = 0
+        real_labels_d = np.ones((batch_size, 1))*0.95
+        fake_labels_d = np.ones((batch_size, 1))*0.05
+        labels_g = np.ones((batch_size, 1))
+        for i in range(0, batch_num, 2):
+            images = self.data_generating_function(batch_size)
+            real = self.noise_generating_function(batch_size)
+            fake = self.encode(images)
+            loss_d1 = self.discriminator_latent.train_on_batch(
+                    real,
+                    real_labels_d)
+            loss_d2 = self.discriminator_latent.train_on_batch(
+                    fake,
+                    fake_labels_d)
+            running_loss_d += loss_d1 + loss_d2
+            images = self.data_generating_function(batch_size)
+            __, loss_r1, loss_g1 = self.aae.train_on_batch(
+                    images,
+                    [images, labels_g])
+            images = self.data_generating_function(batch_size)
+            __, loss_r2, loss_g2 = self.aae.train_on_batch(
+                    images,
+                    [images, labels_g])
+            running_loss_g += loss_g1 + loss_g2
+            running_loss_r += loss_r1 + loss_r2
+            if verbose:
+                print(f"{prepend}[{(i+1)*batch_size}/{batch_num*batch_size}]: "
+                      f"G={running_loss_g/(i+2):.4f}; "
+                      f"D={running_loss_d/(i+2):.4f}; ",
+                      f"R={running_loss_r/(i+2):.4f}",
+                      end='\r')
+        print()
+        return (running_loss_d / batch_num,
+                running_loss_g / batch_num,
+                running_loss_r / batch_num)
+
+
+class EncodingGenerativeAdversarialNetwork(AutoEncoder, GenerativeAdversarialNetwork):
+
+    def __init__(self,
+            image_shape,
+            latent_dim,
+            parameter_json_path,
+            data_generating_function,
+            noise_generating_function,):
+        super().__init__(image_shape,
+                         latent_dim,
+                         parameter_json_path,
+                         data_generating_function,
+                         noise_generating_function)
+
+        self.dae = self._build_dae(
+                self.encoder,
+                self.generator,
+                self.discriminator_image)
+
+
+    def _build_dae(self, encoder, generator, discriminator):
+        discriminator.trainable = False
+        input_shape = encoder.layers[0].input_shape[0][1:]
+        input_layer = Input(input_shape)
+        encoded = encoder(input_layer)
+        decoded = generator(encoded)
+        prediction = discriminator(decoded)
+        model = Model(input_layer, [decoded, prediction])
+        model.compile(Adam(lr=self.parameters["lr"]["gan_generator"],
+                           beta_1=0.5),
+                      loss=[self.parameters["loss"]["reconstruct_image"],
+                            self.parameters["loss"]["adversarial"]],
+                      loss_weights=[self.parameters["alpha"]["reconstruct_image"],
+                                    self.parameters["alpha"]["discriminate_image"]])
+        return model
+
+
+    def train(self, batch_size=32, batch_num=1, verbose=True, prepend=''):
+        running_loss_r = 0
+        running_loss_d = 0
+        running_loss_g = 0
+        real_labels_d = np.ones((batch_size, 1))*0.95
+        fake_labels_d = np.ones((batch_size, 1))*0.05
+        labels_g = np.ones((batch_size, 1))
+        for i in range(0, batch_num, 4):
+            real1 = self.data_generating_function(batch_size)
+            real2 = self.data_generating_function(batch_size)
+            generated = self.generate(batch_size)
+            autoencoded = self.autoencode_images(self.data_generating_function(batch_size))
+            running_loss_d += self.discriminator_image.train_on_batch(
+                    real1,
+                    real_labels_d)
+            running_loss_d += self.discriminator_image.train_on_batch(
+                    generated,
+                    fake_labels_d)
+            running_loss_d += self.discriminator_image.train_on_batch(
+                    real2,
+                    real_labels_d)
+            running_loss_d += self.discriminator_image.train_on_batch(
+                    autoencoded,
+                    fake_labels_d)
+            for __ in range(4):
+                images = self.data_generating_function(batch_size)
+                __, loss_r, loss_g = self.dae.train_on_batch(
+                        images,
+                        [images, labels_g])
+                running_loss_g += loss_g
+                running_loss_r += loss_r
+            if verbose:
+                print(f"{prepend}[{(i+1)*batch_size}/{batch_num*batch_size}]: "
+                      f"G={running_loss_g/(i+2):.4f}; "
+                      f"D={running_loss_d/(i+2):.4f}; ",
+                      f"R={running_loss_r/(i+2):.4f}",
+                      end='\r')
+        print()
+        return (running_loss_d / batch_num,
+                running_loss_g / batch_num,
+                running_loss_r / batch_num)
+
+
+class AutoEncodingGenerativeAdversarialNetwork(AdversarialAutoEncoder, EncodingGenerativeAdversarialNetwork):
+
+    def __init__(self,
+            image_shape,
+            latent_dim,
+            parameter_json_path,
+            data_generating_function,
+            noise_generating_function,):
+        super().__init__(image_shape,
+                         latent_dim,
+                         parameter_json_path,
+                         data_generating_function,
+                         noise_generating_function)
+        self.aegan = self._build_aegan(
+                self.encoder,
+                self.generator,
+                self.discriminator_image,
+                self.discriminator_latent)
+
+
+
+    def _build_aegan(self, encoder, generator, discriminator_image, discriminator_latent):
+        discriminator_image.trainable = False
+        discriminator_latent.trainable = False
+        input_image_shape = encoder.layers[0].input_shape[0][1:]
+        input_latent_shape = generator.layers[0].input_shape[0][1:]
+        x_real = Input(input_image_shape)
+        z_real = Input(input_latent_shape)
+        z_hat = encoder(x_real)
+        x_tilde = generator(z_hat)
+        x_hat = generator(z_real)
+        z_tilde = encoder(x_hat)
+        prediction_x_hat = discriminator_image(x_hat)
+        prediction_x_tilde = discriminator_image(x_tilde)
+        prediction_z_hat = discriminator_latent(z_hat)
+        prediction_z_tilde = discriminator_latent(z_tilde)
+        model = Model(
+                [x_real, z_real],
+                [x_tilde,
+                    z_tilde,
+                    prediction_x_hat,
+                    prediction_x_tilde,
+                    prediction_z_hat,
+                    prediction_z_tilde
+                    ])
+        model.compile(Adam(lr=self.parameters["lr"]["gan_generator"],
+                           beta_1=0.5),
+                      loss=[self.parameters["loss"]["reconstruct_image"],
+                            self.parameters["loss"]["reconstruct_latent"],
+                            self.parameters["loss"]["adversarial"],
+                            self.parameters["loss"]["adversarial"],
+                            self.parameters["loss"]["adversarial"],
+                            self.parameters["loss"]["adversarial"],
+                            ],
+                      loss_weights=[self.parameters["alpha"]["reconstruct_image"],
+                                    self.parameters["alpha"]["reconstruct_latent"],
+                                    self.parameters["alpha"]["discriminate_image"],
+                                    self.parameters["alpha"]["discriminate_image"],
+                                    self.parameters["alpha"]["discriminate_latent"],
+                                    self.parameters["alpha"]["discriminate_latent"],
+                                    ])
+        return model
+
+
+    def train(self, batch_size=32, batch_num=1, verbose=True, prepend=''):
+        running_loss_rx = 0
+        running_loss_rz = 0
+        running_loss_dx = 0
+        running_loss_dz = 0
+        running_loss_gx = 0
+        running_loss_gz = 0
+        real_labels_d = np.ones((batch_size, 1))*0.95
+        fake_labels_d = np.ones((batch_size, 1))*0.05
+        labels_g = np.ones((batch_size, 1))
+        for i in range(0, batch_num, 4):
+            x1 = self.data_generating_function(batch_size)
+            x2 = self.data_generating_function(batch_size)
+            x_hat = self.generate(batch_size)
+            x_tilde = self.autoencode_images(self.data_generating_function(batch_size))
+            running_loss_dx += self.discriminator_image.train_on_batch(
+                    x1,
+                    real_labels_d)
+            running_loss_dx += self.discriminator_image.train_on_batch(
+                    x_hat,
+                    fake_labels_d)
+            running_loss_dx += self.discriminator_image.train_on_batch(
+                    x2,
+                    real_labels_d)
+            running_loss_dx += self.discriminator_image.train_on_batch(
+                    x_tilde,
+                    fake_labels_d)
+
+            z1 = self.noise_generating_function(batch_size)
+            z2 = self.noise_generating_function(batch_size)
+            z_hat = self.encode(self.data_generating_function(batch_size))
+            z_tilde = self.encode(self.decode(self.noise_generating_function(batch_size)))
+            running_loss_dz += self.discriminator_latent.train_on_batch(
+                    z1,
+                    real_labels_d)
+            running_loss_dz += self.discriminator_latent.train_on_batch(
+                    z_hat,
+                    fake_labels_d)
+            running_loss_dz += self.discriminator_latent.train_on_batch(
+                    z2,
+                    real_labels_d)
+            running_loss_dz += self.discriminator_latent.train_on_batch(
+                    z_tilde,
+                    fake_labels_d)
+
+            for __ in range(4):
+                images = self.data_generating_function(batch_size)
+                latent = self.noise_generating_function(batch_size)
+                losses = self.aegan.train_on_batch(
+                        [images, latent],
+                        [images, latent, labels_g, labels_g, labels_g, labels_g])
+                (__, loss_rx, loss_rz, loss_dx_g_e_x,
+                        loss_dx_g_z, loss_dz_e_g_z, loss_dz_e_x) = losses
+                running_loss_rx += loss_rx
+                running_loss_rz += loss_rz
+                running_loss_gx += (loss_dx_g_e_x + loss_dx_g_z) / 2
+                running_loss_gz += (loss_dz_e_g_z + loss_dz_e_x) / 2
+            if verbose:
+                print(f"{prepend}[{(i+1)*batch_size}/{batch_num*batch_size}]: "
+                      f"Gx={running_loss_gx/(i+2):.4f}; "
+                      f"Gz={running_loss_gz/(i+2):.4f}; "
+                      f"Dx={running_loss_dx/(i+2):.4f}; ",
+                      f"Dz={running_loss_dz/(i+2):.4f}; ",
+                      f"Rx={running_loss_rx/(i+2):.4f}",
+                      f"Rz={running_loss_rz/(i+2):.4f}",
+                      end='\r')
+        print()
+        return
