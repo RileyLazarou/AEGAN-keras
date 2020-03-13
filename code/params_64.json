@@ -1,0 +1,48 @@
+{
+  "encoder": {
+    "channels": [64, 64, 128, 128, 128, 256],
+    "kernel_widths": [4, 4, 4, 4, 4, 4],
+    "strides": [2, 2, 2, 2, 1, 1],
+    "hidden_activation": "relu",
+    "output_activation": "linear"
+  },
+  "generator": {
+    "channels": [256, 128, 128, 64, 64, 3],
+    "kernel_widths": [4, 4, 4, 4, 4, 4],
+    "strides": [1, 1, 1, 1, 1, 1],
+    "upsampling": [2, 2, 2, 2, 1, 1],
+    "starting_shape": [4, 4, 64],
+    "hidden_activation": "relu",
+    "output_activation": "tanh",
+    "batchnorm_momentum": 0.9
+  },
+  "discriminator_image": {
+    "channels": [64, 64, 128, 128, 128, 256],
+    "kernel_widths": [4, 4, 4, 4, 4, 4],
+    "strides": [2, 2, 2, 2, 1, 1],
+    "hidden_activation": "relu",
+    "batchnorm_momentum": null
+  },
+  "discriminator_latent": {
+    "layers": 16,
+    "width": 16,
+    "hidden_activation": "relu"
+  },
+  "lr": {
+    "ae_image": 0.001,
+    "ae_latent": 0.001,
+    "gan_generator": 0.0002,
+    "gan_discriminator": 0.001
+  },
+  "alpha": {
+    "discriminate_image": 1,
+    "discriminate_latent": 1,
+    "reconstruct_image": 5,
+    "reconstruct_latent": 5
+  },
+  "loss": {
+    "adversarial": "binary_crossentropy",
+    "reconstruct_image": "mae",
+    "reconstruct_latent": "mse"
+  }
+}

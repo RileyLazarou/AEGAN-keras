@@ -1,10 +1,12 @@
 import os
+import glob
 
 from PIL import Image
 import numpy as np
 from tensorflow.keras.datasets.mnist import load_data
+import progressbar
 
-def plot_images(ims, num, filename, inverse=False):
+def plot_images(ims, num, filename):
     """
     Given a list of (equally-shaped) images
     Save them as `filename` in a `num`-by-`num` square
@@ -34,12 +36,35 @@ def plot_images(ims, num, filename, inverse=False):
             row * image_height : (row + 1) * image_height,
             column * image_width : (column + 1) * image_width,
         ] = this_image
-    if inverse:
-        full_im = 1 - full_im
     full_im[:, :, 3] = 1
 
     im = Image.fromarray(np.array(full_im * 255, dtype=np.uint8))
     im.save(filename)
+    im.close()
+
+
+
+def load_image_files(data_dir, reshape=None, flip=True):
+    images = []
+    FILEPATHS = glob.glob(os.path.join(data_dir, "*.jpg"))
+    FILEPATHS += glob.glob(os.path.join(data_dir, "*.png"))
+    for image_path in progressbar.progressbar(FILEPATHS):
+        im = Image.open(image_path)
+        width, height = im.size
+        if reshape is not None:
+            im = im.resize(reshape)
+        im = np.array(im) / 255.0
+        if len(im.shape) == 2:  # No channels greyscale
+            im = np.reshape((*im.shape, 1))
+        if im.shape[2] == 1:  # One channel greyscale
+            im = np.tile(im, (1, 1, 3))
+        im = im * 2 - 1
+        images.append(im)
+        if flip:
+            images.append(im[:, ::-1])
+    np.random.shuffle(images)
+    images = np.array(images)
+    return images
 
 
 def get_mnist_data():
@@ -50,7 +75,10 @@ def get_mnist_data():
     x_test = x_test.reshape((-1, 28, 28, 1))
     x_test = x_test / 255
     x_test = x_test * 2 - 1
-    return (x_train, y_train), (x_test, y_test)
+    x_train *= -1
+    y_test *= -1
+    return ((x_train.astype(np.float32), y_train.astype(np.float32)),
+            (x_test.astype(np.float32), y_test.astype(np.float32)))
 
 
 def upscale(im):
@@ -69,7 +97,6 @@ def plot_interpolation_gif(start,
             decoder=lambda x: x,
             frames=120,
             interpolation='linear',
-            inverse=False,
             upscale_times=2):
     if not os.path.exists(directory):
         os.makedirs(directory)
@@ -94,11 +121,11 @@ def plot_interpolation_gif(start,
         interpolated = np.array([upscale(x) for x in interpolated])
         start_upscaled = upscale(start_upscaled)
         finish_upscaled = upscale(finish_upscaled)
-    plot_images([start_upscaled], 1, os.path.join(directory, f"start.png"), inverse=inverse)
-    plot_images([finish_upscaled], 1, os.path.join(directory, f"finish.png"), inverse=inverse)
+    plot_images([start_upscaled], 1, os.path.join(directory, f"start.png"))
+    plot_images([finish_upscaled], 1, os.path.join(directory, f"finish.png"))
     for index, im in enumerate(interpolated):
         this_filename = os.path.join(directory, f"interp.{index:05d}.png")
-        plot_images([im], 1, this_filename, inverse=inverse)
+        plot_images([im], 1, this_filename)
 
 
     os.system(
@@ -113,7 +140,6 @@ def plot_interpolation_grid(starts,
             decoder=lambda x: x,
             steps=7,
             interpolation='linear',
-            inverse=False,
             upscale_times=2):
     starts_encoded = encoder(starts)
     finishes_encoded = encoder(finishes)
@@ -138,7 +164,7 @@ def plot_interpolation_grid(starts,
                 image = upscale(image)
             ims.append(image)
         ims.append(finish)
-    plot_images(ims, steps+2, filename, inverse=inverse)
+    plot_images(ims, steps+2, filename)
 
 
 def build_directories(base_dir, experiment):

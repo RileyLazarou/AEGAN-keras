@@ -1,13 +1,19 @@
 from abc import ABC, abstractmethod
 import json
+import gc
+import sys
+import time
 
 import numpy as np
 from tensorflow.keras.layers import (Input, Dense, Flatten, Concatenate,
                                      Reshape, BatchNormalization, UpSampling2D,
-                                     Conv2D, Activation, Dropout)
+                                     Conv2D, Activation, Dropout, LeakyReLU)
 from tensorflow.keras.models import Model
 from tensorflow.keras.initializers import RandomNormal
 from tensorflow.keras.optimizers import Adam
+import tensorflow as tf
+
+tf.keras.backend.set_floatx('float32')
 
 class GenerativeModel(ABC):
 
@@ -32,7 +38,7 @@ class GenerativeModel(ABC):
 
     def decode(self, latent_vectors):
         """Decode a set of latent vectors as images."""
-        return self.generator.predict(latent_vectors)
+        return self.generator(latent_vectors).numpy()
 
 
     def generate(self, num):
@@ -46,9 +52,10 @@ class GenerativeModel(ABC):
                                  channels=None,
                                  kernel_widths=None,
                                  strides=None,
+                                 batchnorm_momentum=None,
                                  hidden_activation='relu',
                                  output_activation='linear',
-                                 init=RandomNormal(mean=0, stddev=0.002)):
+                                 init=RandomNormal(mean=0, stddev=0.02)):
         """Build a model that maps images to some feature space."""
 
         if not (len(channels) == len(kernel_widths)
@@ -63,7 +70,10 @@ class GenerativeModel(ABC):
         for channel, kernel, stride in zip(channels, kernel_widths, strides):
             X = Conv2D(channel, kernel, strides=stride,
                        padding='same', kernel_initializer=init)(X)
+            if batchnorm_momentum is not None:
+                X = BatchNormalization(momentum=batchnorm_momentum)(X)
             X = Activation(hidden_activation)(X)
+            #X = LeakyReLU(0.2)(X)
 
         X = Flatten()(X)
         X = Dense(output_width, kernel_initializer=init)(X)
@@ -79,10 +89,10 @@ class GenerativeModel(ABC):
                        kernel_widths=None,
                        strides=None,
                        upsampling=None,
-                       batchnorm_momentum=0.9,
+                       batchnorm_momentum=None,
                        hidden_activation='relu',
                        output_activation='tanh',
-                       init=RandomNormal(mean=0, stddev=0.002)):
+                       init=RandomNormal(mean=0, stddev=0.02)):
         """Build a model that maps a latent space to images."""
 
         if not (len(channels) == len(kernel_widths)
@@ -152,7 +162,7 @@ class AutoEncoder(GenerativeModel):
                        strides=None,
                        hidden_activation='relu',
                        output_activation='linear',
-                       init=RandomNormal(mean=0, stddev=0.002)):
+                       init=RandomNormal(mean=0, stddev=0.02)):
         """Build a model that maps images to a latent space."""
         model = self._build_feature_extractor(
                 image_shape=image_shape,
@@ -178,12 +188,12 @@ class AutoEncoder(GenerativeModel):
 
     def encode(self, images):
         """Encode a set of images as latent vectors."""
-        return self.encoder.predict(images)
+        return self.encoder(images).numpy()
 
 
     def autoencode_images(self, images):
         """Encode then decode a set of images through latent space."""
-        return self.autoencoder_image.predict(images)
+        return self.autoencoder_image(images).numpy()
 
 
     def train(self, batch_size=32, batch_num=1, verbose=True, prepend=''):
@@ -227,6 +237,7 @@ class GenerativeAdversarialNetwork(GenerativeModel):
                                    channels=None,
                                    kernel_widths=None,
                                    strides=None,
+                                   batchnorm_momentum=None,
                                    hidden_activation='relu',
                                    init=RandomNormal(mean=0, stddev=0.02)):
         """Build a model that classifies images as real (1) or fake (0)."""
@@ -236,6 +247,7 @@ class GenerativeAdversarialNetwork(GenerativeModel):
                                     channels=channels,
                                     kernel_widths=kernel_widths,
                                     strides=strides,
+                                    batchnorm_momentum=batchnorm_momentum,
                                     hidden_activation=hidden_activation,
                                     output_activation='sigmoid',
                                     init=init)
@@ -259,7 +271,7 @@ class GenerativeAdversarialNetwork(GenerativeModel):
 
     def discriminate_images(self, images):
         """Predict whether a set of images are real or not."""
-        return self.discriminator_image.predict(images)
+        return self.discriminator_image(images).numpy()
 
 
     def train(self, batch_size=32, batch_num=1, verbose=True, prepend=''):
@@ -329,6 +341,7 @@ class AdversarialAutoEncoder(AutoEncoder):
         for i in range(layers):
             X = Dense(width)(F)
             X = Activation(hidden_activation)(X)
+            #X = LeakyReLU(0.2)(X)
             F = Concatenate()([F, X])
         X = Dense(1)(F)
         output_layer = Activation('sigmoid')(X)
@@ -358,7 +371,7 @@ class AdversarialAutoEncoder(AutoEncoder):
 
     def discriminate_images(self, images):
         """Predict whether a set of images are real or not."""
-        return self.discriminator_image.predict(images)
+        return self.discriminator_image(images).numpy()
 
 
 
@@ -556,6 +569,7 @@ class AutoEncodingGenerativeAdversarialNetwork(AdversarialAutoEncoder, EncodingG
         real_labels_d = np.ones((batch_size, 1))*0.95
         fake_labels_d = np.ones((batch_size, 1))*0.05
         labels_g = np.ones((batch_size, 1))
+        start = time.time()
         for i in range(0, batch_num, 4):
             x1 = self.data_generating_function(batch_size)
             x2 = self.data_generating_function(batch_size)
@@ -573,6 +587,7 @@ class AutoEncodingGenerativeAdversarialNetwork(AdversarialAutoEncoder, EncodingG
             running_loss_dx += self.discriminator_image.train_on_batch(
                     x_tilde,
                     fake_labels_d)
+            del x_hat, x_tilde, x1, x2
 
             z1 = self.noise_generating_function(batch_size)
             z2 = self.noise_generating_function(batch_size)
@@ -591,26 +606,27 @@ class AutoEncodingGenerativeAdversarialNetwork(AdversarialAutoEncoder, EncodingG
                     z_tilde,
                     fake_labels_d)
 
-            for __ in range(4):
+            for j in range(4):
                 images = self.data_generating_function(batch_size)
                 latent = self.noise_generating_function(batch_size)
                 losses = self.aegan.train_on_batch(
                         [images, latent],
                         [images, latent, labels_g, labels_g, labels_g, labels_g])
-                (__, loss_rx, loss_rz, loss_dx_g_e_x,
+                (_, loss_rx, loss_rz, loss_dx_g_e_x,
                         loss_dx_g_z, loss_dz_e_g_z, loss_dz_e_x) = losses
                 running_loss_rx += loss_rx
                 running_loss_rz += loss_rz
                 running_loss_gx += (loss_dx_g_e_x + loss_dx_g_z) / 2
                 running_loss_gz += (loss_dz_e_g_z + loss_dz_e_x) / 2
             if verbose:
+                t = int(time.time() - start)
                 print(f"{prepend}[{(i+1)*batch_size}/{batch_num*batch_size}]: "
-                      f"Gx={running_loss_gx/(i+2):.4f}; "
-                      f"Gz={running_loss_gz/(i+2):.4f}; "
-                      f"Dx={running_loss_dx/(i+2):.4f}; ",
-                      f"Dz={running_loss_dz/(i+2):.4f}; ",
-                      f"Rx={running_loss_rx/(i+2):.4f}",
-                      f"Rz={running_loss_rz/(i+2):.4f}",
+                      f"Gx={running_loss_gx/(i+4):.4f}; "
+                      f"Gz={running_loss_gz/(i+4):.4f}; "
+                      f"Dx={running_loss_dx/(i+4):.4f}; "
+                      f"Dz={running_loss_dz/(i+4):.4f}; "
+                      f"Rx={running_loss_rx/(i+4):.4f}; "
+                      f"Rz={running_loss_rz/(i+4):.4f}; "
+                      f'({t//(3600):02d}:{(t%3600)//60:02d}:{t%60:02d})',
                       end='\r')
         print()
-        return
