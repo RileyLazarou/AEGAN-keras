@@ -104,6 +104,7 @@ def get_args():
     parser.add_argument('-b', '--batch_size', type=int, default=32)
     parser.add_argument('-d', '--data_dir', type=str, default=None)
     parser.add_argument('-e', '--epochs', type=int, default=1)
+    parser.add_argument('-s', '--steps_per_epoch', type=int, default=None)
     return parser.parse_args()
 
 
@@ -113,10 +114,12 @@ def train_model(model_type,
                 latent_dim,
                 batch_size,
                 epochs,
+                steps_per_epoch,
                 test_images,
                 test_noise,
                 x_train,
-                x_test,):
+                x_test,
+                ):
     model = model_type(
             x_train.shape[1:],
             latent_dim,
@@ -124,11 +127,11 @@ def train_model(model_type,
             lambda x: get_samples(x, x_train, x_test),
             lambda x: get_noise(x, latent_dim),
             )
-    BATCHES_PER_EPOCH = len(x_train) // batch_size
-    #BATCHES_PER_EPOCH = 300
+    if not steps_per_epoch:
+        steps_per_epoch = len(x_train) // batch_size
     for epoch in range(epochs):
         model.train(batch_size=batch_size,
-                    batch_num=BATCHES_PER_EPOCH,
+                    batch_num=steps_per_epoch,
                     prepend=f'Epoch {epoch+1} ')
         if plot_every and (epoch + 1) % plot_every == 0:
             plot_epoch(model, dirs, epoch, test_images=test_images, test_noise=test_noise)
@@ -176,6 +179,7 @@ if __name__ == '__main__':
                 args.latent_dim,
                 args.batch_size,
                 args.epochs,
+                args.steps_per_epoch,
                 test_images,
                 test_noise,
                 x_train,

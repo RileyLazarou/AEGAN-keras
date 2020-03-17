@@ -109,6 +109,13 @@ class GenerativeModel(ABC):
         X = Activation(hidden_activation)(X)
         X = Reshape(starting_shape)(X)
 
+        Y = Dense(64)(input_layer)
+        if batchnorm_momentum is not None:
+            Y = BatchNormalization(momentum=batchnorm_momentum)(Y)
+        Y = Activation(hidden_activation)(Y)
+        Y = Reshape((1, 1, 64))(Y)
+        Y = UpSampling2D((64, 64))(Y)
+
 
         for i in range(len(channels)-1):
             X = UpSampling2D(upsampling[i])(X)
@@ -118,6 +125,7 @@ class GenerativeModel(ABC):
                 X = BatchNormalization(momentum=batchnorm_momentum)(X)
             X = Activation(hidden_activation)(X)
         else:
+            X = Concatenate()([X, Y])
             X = Conv2D(channels[-1], kernel_widths[-1], strides=strides[-1],
                        padding='same', kernel_initializer=init)(X)
             output_layer = Activation(output_activation)(X)
@@ -612,8 +620,7 @@ class AutoEncodingGenerativeAdversarialNetwork(AdversarialAutoEncoder, EncodingG
                 losses = self.aegan.train_on_batch(
                         [images, latent],
                         [images, latent, labels_g, labels_g, labels_g, labels_g])
-                (_, loss_rx, loss_rz, loss_dx_g_e_x,
-                        loss_dx_g_z, loss_dz_e_g_z, loss_dz_e_x) = losses
+                (_, loss_rx, loss_rz, loss_dx_g_z, loss_dx_g_e_x, loss_dz_e_x, loss_dz_e_g_z, ) = losses
                 running_loss_rx += loss_rx
                 running_loss_rz += loss_rz
                 running_loss_gx += (loss_dx_g_e_x + loss_dx_g_z) / 2
