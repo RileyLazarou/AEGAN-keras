@@ -1,18 +1,16 @@
 import os
 import pickle
 import argparse
+import shutil
+import json
 
 import  numpy as np
-from tensorflow.keras.optimizers import Adam
 
 import models
 import tools
 import generative_model as gm
 
 DIRECTORY = os.path.dirname(os.path.realpath(__file__))
-PARAMTERS = os.path.join(DIRECTORY, "params_64.json")
-
-IMAGE_DIM = (28, 28, 1)
 
 MODEL_TYPES = {"AE": gm.AutoEncoder,
                "GAN": gm.GenerativeAdversarialNetwork,
@@ -91,9 +89,9 @@ def save_models(model, dirs, epoch):
     if "generator" in dir(model):
         model.generator.save(os.path.join(dirs['output_models'], f'g{epoch}.generator.h5'))
     if "discriminator_latent" in dir(model):
-        model.generator.save(os.path.join(dirs['output_models'], f'g{epoch}.discriminator_latent.h5'))
+        model.discriminator_latent.save(os.path.join(dirs['output_models'], f'g{epoch}.discriminator_latent.h5'))
     if "discriminator_image" in dir(model):
-        model.generator.save(os.path.join(dirs['output_models'], f'g{epoch}.discriminator_image.h5'))
+        model.discriminator_image.save(os.path.join(dirs['output_models'], f'g{epoch}.discriminator_image.h5'))
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -105,11 +103,14 @@ def get_args():
     parser.add_argument('-d', '--data_dir', type=str, default=None)
     parser.add_argument('-e', '--epochs', type=int, default=1)
     parser.add_argument('-s', '--steps_per_epoch', type=int, default=None)
+    parser.add_argument('-f', '--parameter_file', type=str, default=None)
+    parser.add_argument('-x', '--flip', type=bool, default=False)
     return parser.parse_args()
 
 
 def train_model(model_type,
                 dirs,
+                parameter_file,
                 plot_every,
                 latent_dim,
                 batch_size,
@@ -123,7 +124,7 @@ def train_model(model_type,
     model = model_type(
             x_train.shape[1:],
             latent_dim,
-            PARAMTERS,
+            parameter_file,
             lambda x: get_samples(x, x_train, x_test),
             lambda x: get_noise(x, latent_dim),
             )
@@ -160,21 +161,27 @@ def train_model(model_type,
 
 if __name__ == '__main__':
     args = get_args()
+    with open(args.parameter_file, 'r') as f:
+        params = json.load(f)
+    shape = (np.array(params['generator']['starting_shape'][:2])
+             * np.prod(params['generator']['upsampling']))
     if args.data_dir is None:
         (x_train, __), (x_test, __) = tools.get_mnist_data()
         del __
     else:
-        data = tools.load_image_files(args.data_dir, reshape=(64, 64))
+        data = tools.load_image_files(args.data_dir, reshape=shape, flip=args.flip)
         x_train = data[:int(0.9*len(data))]
         x_test = data[int(0.9*len(data)):]
         del data
     dirs = set_up_directories(f'{args.name}_{args.type}')
+    shutil.copytree(DIRECTORY, os.path.join(dirs['experiment'], 'code'))
     test_images, test_noise = set_up_test_data(dirs["results"],
             args.name,
             args.latent_dim,
             x_test)
     train_model(MODEL_TYPES[args.type.upper()],
                 dirs,
+                args.parameter_file,
                 args.plot_every,
                 args.latent_dim,
                 args.batch_size,

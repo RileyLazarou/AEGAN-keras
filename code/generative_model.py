@@ -6,14 +6,18 @@ import time
 
 import numpy as np
 from tensorflow.keras.layers import (Input, Dense, Flatten, Concatenate,
-                                     Reshape, BatchNormalization, UpSampling2D,
-                                     Conv2D, Activation, Dropout, LeakyReLU)
+                                     Reshape, UpSampling2D,
+                                     Conv2D, Activation, Dropout, LeakyReLU,
+                                     GaussianNoise, GaussianDropout, 
+                                     LayerNormalization)
+from tensorflow.compat.v1.keras.layers import BatchNormalization
 from tensorflow.keras.models import Model
 from tensorflow.keras.initializers import RandomNormal
 from tensorflow.keras.optimizers import Adam
 import tensorflow as tf
 
 tf.keras.backend.set_floatx('float32')
+CLIPNORM = None
 
 class GenerativeModel(ABC):
 
@@ -38,7 +42,7 @@ class GenerativeModel(ABC):
 
     def decode(self, latent_vectors):
         """Decode a set of latent vectors as images."""
-        return self.generator(latent_vectors).numpy()
+        return self.generator.predict(latent_vectors)
 
 
     def generate(self, num):
@@ -52,10 +56,10 @@ class GenerativeModel(ABC):
                                  channels=None,
                                  kernel_widths=None,
                                  strides=None,
-                                 batchnorm_momentum=None,
                                  hidden_activation='relu',
                                  output_activation='linear',
-                                 init=RandomNormal(mean=0, stddev=0.02)):
+                                 init=RandomNormal(mean=0, stddev=0.02),
+                                 add_noise=False):
         """Build a model that maps images to some feature space."""
 
         if not (len(channels) == len(kernel_widths)
@@ -67,14 +71,18 @@ class GenerativeModel(ABC):
         input_layer = Input(image_shape)
         X = input_layer
 
+        if add_noise:
+            X = GaussianNoise(0.01)(X)
         for channel, kernel, stride in zip(channels, kernel_widths, strides):
             X = Conv2D(channel, kernel, strides=stride,
                        padding='same', kernel_initializer=init)(X)
-            if batchnorm_momentum is not None:
-                X = BatchNormalization(momentum=batchnorm_momentum)(X)
-            X = Activation(hidden_activation)(X)
-            #X = LeakyReLU(0.2)(X)
-
+            if add_noise:
+                X = GaussianDropout(0.005)(X)
+            X = LayerNormalization()(X)
+            if hidden_activation == 'leaky_relu':
+                X = LeakyReLU(0.02)(X)
+            else:
+                X = Activation(hidden_activation)(X)
         X = Flatten()(X)
         X = Dense(output_width, kernel_initializer=init)(X)
         output_layer = Activation(output_activation)(X)
@@ -89,7 +97,6 @@ class GenerativeModel(ABC):
                        kernel_widths=None,
                        strides=None,
                        upsampling=None,
-                       batchnorm_momentum=None,
                        hidden_activation='relu',
                        output_activation='tanh',
                        init=RandomNormal(mean=0, stddev=0.02)):
@@ -104,26 +111,33 @@ class GenerativeModel(ABC):
         input_layer = Input((latent_dim,))
         X = Dense(np.prod(starting_shape),
                   kernel_initializer=init)(input_layer)
-        if batchnorm_momentum is not None:
-            X = BatchNormalization(momentum=batchnorm_momentum)(X)
-        X = Activation(hidden_activation)(X)
+        X = LayerNormalization()(X)
+        if hidden_activation == 'leaky_relu':
+            X = LeakyReLU(0.02)(X)
+        else:
+            X = Activation(hidden_activation)(X)
         X = Reshape(starting_shape)(X)
 
         Y = Dense(64)(input_layer)
-        if batchnorm_momentum is not None:
-            Y = BatchNormalization(momentum=batchnorm_momentum)(Y)
-        Y = Activation(hidden_activation)(Y)
+        Y = LayerNormalization()(Y)
+        if hidden_activation == 'leaky_relu':
+            Y = LeakyReLU(0.02)(Y)
+        else:
+            Y = Activation(hidden_activation)(Y)
         Y = Reshape((1, 1, 64))(Y)
-        Y = UpSampling2D((64, 64))(Y)
-
+        Y = UpSampling2D(np.array(starting_shape[:2]))(Y)
 
         for i in range(len(channels)-1):
+            X = Concatenate()([X, Y])
             X = UpSampling2D(upsampling[i])(X)
+            Y = UpSampling2D(upsampling[i])(Y)
             X = Conv2D(channels[i], kernel_widths[i], strides=strides[i],
                        padding='same', kernel_initializer=init)(X)
-            if batchnorm_momentum is not None:
-                X = BatchNormalization(momentum=batchnorm_momentum)(X)
-            X = Activation(hidden_activation)(X)
+            X = LayerNormalization()(X)
+            if hidden_activation == 'leaky_relu':
+                X = LeakyReLU(0.02)(X)
+            else:
+                X = Activation(hidden_activation)(X)
         else:
             X = Concatenate()([X, Y])
             X = Conv2D(channels[-1], kernel_widths[-1], strides=strides[-1],
@@ -170,7 +184,8 @@ class AutoEncoder(GenerativeModel):
                        strides=None,
                        hidden_activation='relu',
                        output_activation='linear',
-                       init=RandomNormal(mean=0, stddev=0.02)):
+                       init=RandomNormal(mean=0, stddev=0.02),
+                       add_noise=True):
         """Build a model that maps images to a latent space."""
         model = self._build_feature_extractor(
                 image_shape=image_shape,
@@ -180,7 +195,8 @@ class AutoEncoder(GenerativeModel):
                 strides=strides,
                 hidden_activation=hidden_activation,
                 output_activation=output_activation,
-                init=init)
+                init=init,
+                add_noise=add_noise)
         return model
 
 
@@ -190,18 +206,18 @@ class AutoEncoder(GenerativeModel):
         encoding = encoder(input_layer)
         reconstruction = decoder(encoding)
         model = Model(input_layer, reconstruction)
-        model.compile(Adam(lr=lr), loss=loss)
+        model.compile(Adam(clipnorm=1, lr=lr), loss=loss)
         return model
 
 
     def encode(self, images):
         """Encode a set of images as latent vectors."""
-        return self.encoder(images).numpy()
+        return self.encoder.predict(images)
 
 
     def autoencode_images(self, images):
         """Encode then decode a set of images through latent space."""
-        return self.autoencoder_image(images).numpy()
+        return self.autoencoder_image.predict(images)
 
 
     def train(self, batch_size=32, batch_num=1, verbose=True, prepend=''):
@@ -245,7 +261,6 @@ class GenerativeAdversarialNetwork(GenerativeModel):
                                    channels=None,
                                    kernel_widths=None,
                                    strides=None,
-                                   batchnorm_momentum=None,
                                    hidden_activation='relu',
                                    init=RandomNormal(mean=0, stddev=0.02)):
         """Build a model that classifies images as real (1) or fake (0)."""
@@ -255,11 +270,11 @@ class GenerativeAdversarialNetwork(GenerativeModel):
                                     channels=channels,
                                     kernel_widths=kernel_widths,
                                     strides=strides,
-                                    batchnorm_momentum=batchnorm_momentum,
                                     hidden_activation=hidden_activation,
                                     output_activation='sigmoid',
-                                    init=init)
-        model.compile(optimizer=Adam(lr=self.parameters["lr"]["gan_discriminator"], beta_1=0.5),
+                                    init=init,
+                                    add_noise=True)
+        model.compile(optimizer=Adam(clipnorm=1, lr=self.parameters["lr"]["gan_discriminator"], beta_1=0.5),
                       loss=self.parameters["loss"]["adversarial"])
         return model
 
@@ -271,7 +286,7 @@ class GenerativeAdversarialNetwork(GenerativeModel):
         generated = generator(input_layer)
         prediction = discriminator([generated])
         model = Model(input_layer, prediction)
-        model.compile(optimizer=Adam(lr=self.parameters["lr"]["gan_generator"],
+        model.compile(optimizer=Adam(clipnorm=1, lr=self.parameters["lr"]["gan_generator"],
                            beta_1=0.5),
                       loss=self.parameters["loss"]["adversarial"])
         return model
@@ -279,7 +294,7 @@ class GenerativeAdversarialNetwork(GenerativeModel):
 
     def discriminate_images(self, images):
         """Predict whether a set of images are real or not."""
-        return self.discriminator_image(images).numpy()
+        return self.discriminator_image.predict(images)
 
 
     def train(self, batch_size=32, batch_num=1, verbose=True, prepend=''):
@@ -341,20 +356,32 @@ class AdversarialAutoEncoder(AutoEncoder):
                                     layers=16,
                                     width=16,
                                     hidden_activation='relu',
-                                    init=RandomNormal(mean=0, stddev=0.02)):
+                                    init=RandomNormal(mean=0, stddev=0.02),
+                                    add_noise=True):
         """Build a model that classifies latent vectors as real or fake."""
-
         input_layer = Input((latent_dim,))
         F = input_layer
+        if add_noise:
+            F = GaussianNoise(0.01)(F)
         for i in range(layers):
             X = Dense(width)(F)
-            X = Activation(hidden_activation)(X)
-            #X = LeakyReLU(0.2)(X)
+            if add_noise:
+                X = GaussianDropout(0.005)(X)
+            X = LayerNormalization()(X)
+            if hidden_activation == 'leaky_relu':
+                X = LeakyReLU(0.02)(X)
+            else:
+                X = Activation(hidden_activation)(X)
             F = Concatenate()([F, X])
-        X = Dense(1)(F)
+        X = Dense(128)(F)
+        if hidden_activation == 'leaky_relu':
+            X = LeakyReLU(0.02)(X)
+        else:
+            X = Activation(hidden_activation)(X)
+        X = Dense(1)(X)
         output_layer = Activation('sigmoid')(X)
         model = Model(input_layer, output_layer)
-        model.compile(Adam(lr=self.parameters["lr"]["gan_discriminator"],
+        model.compile(Adam(clipnorm=1, lr=self.parameters["lr"]["gan_discriminator"],
                            beta_1=0.5),
                       loss=self.parameters["loss"]["adversarial"])
         return model
@@ -368,7 +395,7 @@ class AdversarialAutoEncoder(AutoEncoder):
         decoded = generator(encoded)
         prediction = discriminator(encoded)
         model = Model(input_layer, [decoded, prediction])
-        model.compile(Adam(lr=self.parameters["lr"]["gan_generator"],
+        model.compile(Adam(clipnorm=1, lr=self.parameters["lr"]["gan_generator"],
                            beta_1=0.5),
                       loss=[self.parameters["loss"]["reconstruct_image"],
                             self.parameters["loss"]["adversarial"]],
@@ -379,7 +406,7 @@ class AdversarialAutoEncoder(AutoEncoder):
 
     def discriminate_images(self, images):
         """Predict whether a set of images are real or not."""
-        return self.discriminator_image(images).numpy()
+        return self.discriminator_image.predict(images)
 
 
 
@@ -451,7 +478,7 @@ class EncodingGenerativeAdversarialNetwork(AutoEncoder, GenerativeAdversarialNet
         decoded = generator(encoded)
         prediction = discriminator(decoded)
         model = Model(input_layer, [decoded, prediction])
-        model.compile(Adam(lr=self.parameters["lr"]["gan_generator"],
+        model.compile(Adam(clipnorm=1, lr=self.parameters["lr"]["gan_generator"],
                            beta_1=0.5),
                       loss=[self.parameters["loss"]["reconstruct_image"],
                             self.parameters["loss"]["adversarial"]],
@@ -548,7 +575,7 @@ class AutoEncodingGenerativeAdversarialNetwork(AdversarialAutoEncoder, EncodingG
                     prediction_z_hat,
                     prediction_z_tilde
                     ])
-        model.compile(Adam(lr=self.parameters["lr"]["gan_generator"],
+        model.compile(Adam(clipnorm=1, lr=self.parameters["lr"]["gan_generator"],
                            beta_1=0.5),
                       loss=[self.parameters["loss"]["reconstruct_image"],
                             self.parameters["loss"]["reconstruct_latent"],
@@ -637,3 +664,4 @@ class AutoEncodingGenerativeAdversarialNetwork(AdversarialAutoEncoder, EncodingG
                       f'({t//(3600):02d}:{(t%3600)//60:02d}:{t%60:02d})',
                       end='\r')
         print()
+

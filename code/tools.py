@@ -5,6 +5,7 @@ from PIL import Image
 import numpy as np
 from tensorflow.keras.datasets.mnist import load_data
 import progressbar
+from skimage.color import rgb2hsv, hsv2rgb
 
 def plot_images(ims, num, filename):
     """
@@ -45,9 +46,12 @@ def plot_images(ims, num, filename):
 
 
 def load_image_files(data_dir, reshape=None, flip=True):
-    images = []
     FILEPATHS = glob.glob(os.path.join(data_dir, "*.jpg"))
     FILEPATHS += glob.glob(os.path.join(data_dir, "*.png"))
+    FILEPATHS += glob.glob(os.path.join(data_dir, "*.webp"))
+    num = len(FILEPATHS) * (2 if flip else 1)
+    images = np.zeros((num, *reshape, 3))
+    counter = 0
     for image_path in progressbar.progressbar(FILEPATHS):
         im = Image.open(image_path)
         width, height = im.size
@@ -59,11 +63,12 @@ def load_image_files(data_dir, reshape=None, flip=True):
         if im.shape[2] == 1:  # One channel greyscale
             im = np.tile(im, (1, 1, 3))
         im = im * 2 - 1
-        images.append(im)
+        images[counter] = im
+        counter += 1
         if flip:
-            images.append(im[:, ::-1])
+            images[counter] = im[:, ::-1]
+            counter += 1
     np.random.shuffle(images)
-    images = np.array(images)
     return images
 
 
@@ -76,7 +81,7 @@ def get_mnist_data():
     x_test = x_test / 255
     x_test = x_test * 2 - 1
     x_train *= -1
-    y_test *= -1
+    x_test *= -1
     return ((x_train.astype(np.float32), y_train.astype(np.float32)),
             (x_test.astype(np.float32), y_test.astype(np.float32)))
 

@@ -13,31 +13,29 @@
     "upsampling": [2, 2, 2, 2, 1, 1],
     "starting_shape": [4, 4, 64],
     "hidden_activation": "relu",
-    "output_activation": "tanh",
-    "batchnorm_momentum": 0.9
+    "output_activation": "tanh"
   },
   "discriminator_image": {
     "channels": [64, 64, 128, 128, 128, 256],
-    "kernel_widths": [4, 4, 4, 4, 4, 4],
+    "kernel_widths": [3, 3, 3, 3, 3, 3],
     "strides": [2, 2, 2, 2, 1, 1],
-    "hidden_activation": "relu",
-    "batchnorm_momentum": null
+    "hidden_activation": "leaky_relu"
   },
   "discriminator_latent": {
     "layers": 16,
     "width": 16,
-    "hidden_activation": "relu"
+    "hidden_activation": "leaky_relu"
   },
   "lr": {
     "ae_image": 0.001,
     "ae_latent": 0.001,
     "gan_generator": 0.0002,
-    "gan_discriminator": 0.001
+    "gan_discriminator": 0.0005
   },
   "alpha": {
     "discriminate_image": 1,
     "discriminate_latent": 1,
-    "reconstruct_image": 5,
+    "reconstruct_image": 10,
     "reconstruct_latent": 5
   },
   "loss": {
