@@ -19,7 +19,7 @@ To use, run the script train.py with the following arguments:
   MNIST is used
 -e EPOCHS
   Number of epochs to train for
--s
+-s STEPS
   Number of training steps per epoch
 -f PARAMETER_FILE
   Parameters for building the network. See
