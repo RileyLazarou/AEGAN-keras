@@ -5,7 +5,6 @@ from PIL import Image
 import numpy as np
 from tensorflow.keras.datasets.mnist import load_data
 import progressbar
-from skimage.color import rgb2hsv, hsv2rgb
 
 def plot_images(ims, num, filename):
     """
@@ -54,12 +53,13 @@ def load_image_files(data_dir, reshape=None, flip=True):
     counter = 0
     for image_path in progressbar.progressbar(FILEPATHS):
         im = Image.open(image_path)
+        #im = im.convert('RGB')
         width, height = im.size
         if reshape is not None:
             im = im.resize(reshape)
         im = np.array(im) / 255.0
         if len(im.shape) == 2:  # No channels greyscale
-            im = np.reshape((*im.shape, 1))
+            im = np.reshape(im, (*im.shape, 1))
         if im.shape[2] == 1:  # One channel greyscale
             im = np.tile(im, (1, 1, 3))
         im = im * 2 - 1

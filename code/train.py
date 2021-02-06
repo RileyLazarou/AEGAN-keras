@@ -6,7 +6,6 @@ import json
 
 import  numpy as np
 
-import models
 import tools
 import generative_model as gm
 
