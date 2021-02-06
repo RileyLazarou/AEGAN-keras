@@ -13,7 +13,8 @@
     "upsampling": [2, 2, 2, 2, 1, 1],
     "starting_shape": [4, 4, 64],
     "hidden_activation": "relu",
-    "output_activation": "tanh"
+    "output_activation": "tanh",
+    "fixed_dim": 64
   },
   "discriminator_image": {
     "channels": [64, 64, 128, 128, 128, 256],

@@ -99,6 +99,7 @@ class GenerativeModel(ABC):
                        upsampling=None,
                        hidden_activation='relu',
                        output_activation='tanh',
+                       fixed_dim=64,
                        init=RandomNormal(mean=0, stddev=0.02)):
         """Build a model that maps a latent space to images."""
 
